@@ -7,7 +7,7 @@ struct GameWebView: UIViewRepresentable {
     let url: URL
     @Binding var discoveredIframeUrl: String?
     
-    class Coordinator: NSObject, WKScriptMessageHandler {
+    class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var parent: GameWebView
         
         init(_ parent: GameWebView) {
@@ -49,7 +49,7 @@ struct GameWebView: UIViewRepresentable {
                     }
                 }
             }
-        }
+        } // <-- Diese Klammer hatte vorhin gefehlt!
     }
     
     func makeCoordinator() -> Coordinator {
@@ -139,13 +139,19 @@ struct GameWebView: UIViewRepresentable {
         
         let config = WKWebViewConfiguration()
         config.userContentController = userContentController
+        
+        // --- REZEPT GEGEN DEN SCHWARZEN VIDEOPLAYER ---
+        config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
+        // ----------------------------------------------
+        
         if #available(iOS 15.4, *) { config.preferences.isElementFullscreenEnabled = true }
         
         let webView = WKWebView(frame: .zero, configuration: config)
         
-        // NEU: Die Safari-Tarnkappe für unseren Game-Player!
+        // Die Safari-Tarnkappe für unseren Game-Player!
         webView.customUserAgent = "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        webView.navigationDelegate = context.coordinator
         
         webView.scrollView.isScrollEnabled = true
         webView.scrollView.minimumZoomScale = 1.0
@@ -158,52 +164,6 @@ struct GameWebView: UIViewRepresentable {
         context.coordinator.parent = self
         if webView.url == nil {
             let request = URLRequest(url: url)
-            webView.load(request)
-        }
-    }
-}
-
-// MARK: - Der integrierte Store-Browser
-
-struct StoreWebView: UIViewRepresentable {
-    let startUrl: URL
-    @Binding var currentTitle: String
-    @Binding var currentUrl: String
-    
-    class Coordinator: NSObject, WKNavigationDelegate {
-        var parent: StoreWebView
-        
-        init(_ parent: StoreWebView) {
-            self.parent = parent
-        }
-        
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            DispatchQueue.main.async {
-                if let title = webView.title {
-                    self.parent.currentTitle = title.components(separatedBy: " by ").first ?? title
-                }
-                self.parent.currentUrl = webView.url?.absoluteString ?? ""
-            }
-        }
-    }
-    
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-    
-    func makeUIView(context: Context) -> WKWebView {
-        let webView = WKWebView()
-        
-        // NEU: Die Safari-Tarnkappe für unseren integrierten Store!
-        webView.customUserAgent = "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
-        
-        webView.navigationDelegate = context.coordinator
-        return webView
-    }
-    
-    func updateUIView(_ webView: WKWebView, context: Context) {
-        if webView.url == nil {
-            let request = URLRequest(url: startUrl)
             webView.load(request)
         }
     }

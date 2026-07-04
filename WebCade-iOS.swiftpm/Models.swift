@@ -5,12 +5,17 @@ import SwiftUI
 struct WebGame: Identifiable, Codable {
     var id = UUID()
     let title: String
-    let developer: String
-    var colorName: String 
+    var developer: String
+    var colorName: String
     var localPath: String?
     var isDownloaded: Bool = false
     let sourceUrl: String
-    var iframeUrl: String? 
+    var iframeUrl: String?
+    var coverImageUrl: String?
+    
+    // NEU: Update-Tracking Metadaten
+    var gameVersion: String?           // Für die version.json (Unity etc.)
+    var lastModifiedHeader: String?    // Für den itch.io HTTP-Header
     
     var coverColor: Color {
         switch colorName {
@@ -30,18 +35,19 @@ class GameLibrary: ObservableObject {
     
     init() { loadGames() }
     
-    func addGame(title: String, url: String) {
+    // Nimmt Entwickler und Cover-URL direkt beim Scrapen entgegen
+    func addGame(title: String, developer: String, coverImageUrl: String?, url: String) {
         let colors = ["blue", "purple", "orange", "green", "pink"]
         let newGame = WebGame(
-            title: title.isEmpty ? "Neues Spiel" : title, 
-            developer: "Unbekannt", 
+            title: title.isEmpty ? "Neues Spiel" : title,
+            developer: developer.isEmpty ? "Unbekannt" : developer,
             colorName: colors.randomElement() ?? "blue",
-            sourceUrl: url
+            sourceUrl: url,
+            coverImageUrl: coverImageUrl
         )
         games.append(newGame)
     }
     
-    // NEU: ID-basierte Löschfunktion (absolut robust!)
     func deleteGame(withId id: UUID) {
         let docsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
         let gameFolder = docsPath.appendingPathComponent(id.uuidString)
@@ -69,10 +75,8 @@ class GameLibrary: ObservableObject {
            let decoded = try? JSONDecoder().decode([WebGame].self, from: savedData) {
             self.games = decoded
         } else {
-            self.games = [
-                WebGame(title: "Death Loop", developer: "Hopeful Light", colorName: "blue", sourceUrl: "https://hopeful-light.itch.io/death-loop"),
-                WebGame(title: "Celeste Classic", developer: "Maddy Thorson", colorName: "purple", sourceUrl: "https://maddymakesgamesinc.itch.io/celesteclassic")
-            ]
+            // Die App startet mit einer sauberen, leeren Bibliothek
+            self.games = []
         }
     }
 }

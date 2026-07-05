@@ -1,4 +1,6 @@
+import Foundation
 import SwiftUI
+import Combine
 import WebKit
 
 // MARK: - WebKit Logik

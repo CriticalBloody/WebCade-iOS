@@ -1,4 +1,6 @@
+import Foundation
 import SwiftUI
+import Combine
 import WebKit
 
 // MARK: - UI Ansichten
@@ -54,8 +56,6 @@ struct GameCardView: View {
     var body: some View {
         VStack(alignment: .leading) {
             
-            // LÖSUNG: Das farbige Rechteck gibt die strenge Breite des Grids vor.
-            // Das Bild wird als Overlay exakt in diese Form gepresst.
             RoundedRectangle(cornerRadius: 16)
                 .fill(game.coverColor.gradient)
                 .overlay {
@@ -71,6 +71,16 @@ struct GameCardView: View {
                 }
                 .frame(height: 140) // Feste Kachelhöhe
                 .clipShape(RoundedRectangle(cornerRadius: 16)) // Schneidet ab, was übersteht
+                
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: game.isDownloaded ? "checkmark.circle.fill" : "icloud.and.arrow.down")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(game.isDownloaded ? .green : .white)
+                        .shadow(color: .black.opacity(0.8), radius: 4, x: 0, y: 2) // Schatten für perfekten Kontrast
+                        .padding(10)
+                }
+                // ----------------------------------------------------
+                
                 .shadow(color: .black.opacity(0.1), radius: 8, x: 0, y: 4)
             
             Text(game.title)

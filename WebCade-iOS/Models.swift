@@ -1,4 +1,6 @@
+import Foundation
 import SwiftUI
+import Combine
 
 // MARK: - Datenmodelle & Bibliothek
 

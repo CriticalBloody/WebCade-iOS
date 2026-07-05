@@ -12,8 +12,6 @@ class LocalServerManager: ObservableObject {
     private var server = HttpServer()
     @Published var isRunning = false
     
-    // ... der restliche Code bleibt exakt gleich ...
-    
     func startServer(for directoryPath: String, iframeUrlString: String?) {
         do {
             // Wir nutzen Swifters Standard-Server NICHT mehr, da er root-Dateien 
@@ -67,7 +65,7 @@ class LocalServerManager: ObservableObject {
                 print("🔄 PROXY: Lade dynamisch fehlende Datei -> \(path)")
                 
                 var req = URLRequest(url: remoteUrl)
-                req.setValue("Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+                req.setValue(AppConstants.userAgent, forHTTPHeaderField: "User-Agent")
                 req.setValue(iframeStr, forHTTPHeaderField: "Referer")
                 
                 let semaphore = DispatchSemaphore(value: 0)
@@ -82,7 +80,12 @@ class LocalServerManager: ObservableObject {
                     semaphore.signal()
                 }
                 task.resume()
-                semaphore.wait() // Blockiert den Swifter-Thread, bis die Datei da ist
+                // Timeout von 15 Sekunden verhindert Thread-Deadlock bei langsamen Verbindungen
+                let waitResult = semaphore.wait(timeout: .now() + 15)
+                if waitResult == .timedOut {
+                    print("⏱ PROXY TIMEOUT: \(path) hat zu lange gebraucht.")
+                    fetchedData = nil
+                }
                 
                 if let data = fetchedData {
                     try? FileManager.default.createDirectory(at: localFileUrl.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -97,9 +100,9 @@ class LocalServerManager: ObservableObject {
                 return .notFound
             }
             
-            try server.start(8080, forceIPv4: true)
+            try server.start(AppConstants.serverPort, forceIPv4: true)
             isRunning = true
-            print("🚀 Lokaler Server (mit Caching Proxy) läuft auf http://localhost:8080")
+            print("🚀 Lokaler Server (mit Caching Proxy) läuft auf \(AppConstants.serverBaseURL)")
         } catch {
             print("❌ Server-Start fehlgeschlagen: \(error)")
         }
@@ -138,9 +141,8 @@ class GameDownloader: ObservableObject {
             var pathsToDownload = Set<String>()
             self.statusText = "Lade index.html..."
             
-            // NEU: Die iPad-Tarnung für den Haupt-Download!
             var mainReq = URLRequest(url: iframeUrl)
-            mainReq.setValue("Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+            mainReq.setValue(AppConstants.userAgent, forHTTPHeaderField: "User-Agent")
             mainReq.setValue(iframeUrlString, forHTTPHeaderField: "Referer")
             
             let (htmlData, _) = try await URLSession.shared.data(for: mainReq)
@@ -159,9 +161,11 @@ class GameDownloader: ObservableObject {
                 }
             }
             
-            let fileExtensions = "wasm|data|js|json|zip|pck|unityweb|mem|ogg|mp3|png|jpg"
-            let extRegex = try NSRegularExpression(pattern: "[\"']([^\"'\\s]+\\.(\(fileExtensions)))[\"']")
+            // Regex erkennt auch Backtick-Template-Strings und .webm (Ren'Py Menü-Videos)
+            let fileExtensions = "wasm|data|js|json|zip|pck|unityweb|mem|ogg|mp3|png|jpg|webm"
+            let extRegex = try NSRegularExpression(pattern: "[\"'`]([^\"'`\\s]+\\.(\(fileExtensions)))[\"'`]")
             
+            // PHASE 1: HTML-Scan (direkte Referenzen)
             let htmlMatches = extRegex.matches(in: htmlString, range: NSRange(htmlString.startIndex..., in: htmlString))
             for match in htmlMatches {
                 if let range = Range(match.range(at: 1), in: htmlString) {
@@ -170,14 +174,63 @@ class GameDownloader: ObservableObject {
                 }
             }
             
-            let total = pathsToDownload.count
-            for (index, relPath) in Array(pathsToDownload).sorted().enumerated() {
+            // PHASE 2: JS Deep-Scan
+            // Ren'Py, Unity etc. referenzieren große Engine-Dateien (.wasm, .data, .webm)
+            // erst aus JS-Loader-Code heraus – diese werden hier aufgedeckt.
+            // JS-Dateien werden sofort gespeichert, um Doppel-Downloads zu vermeiden.
+            let jsFiles = pathsToDownload.filter { $0.lowercased().hasSuffix(".js") }
+            var savedFiles = Set<String>()
+            
+            self.statusText = "Deep-Scan: \(jsFiles.count) JS-Dateien werden analysiert..."
+            print("🔍 Deep-Crawler: Scanne \(jsFiles.count) JS-Dateien auf Engine-Assets...")
+            
+            for jsRelPath in jsFiles {
+                let cleanJsPath = jsRelPath.components(separatedBy: "?").first ?? jsRelPath
+                guard let jsUrl = URL(string: jsRelPath, relativeTo: baseUrl) else { continue }
+                
+                var jsReq = URLRequest(url: jsUrl)
+                jsReq.setValue(AppConstants.userAgent, forHTTPHeaderField: "User-Agent")
+                jsReq.setValue(iframeUrlString, forHTTPHeaderField: "Referer")
+                
+                guard let (jsData, _) = try? await URLSession.shared.data(for: jsReq) else { continue }
+                
+                // JS sofort speichern (verhindert doppelten Download in Phase 3)
+                let localJsPath = gameFolder.appendingPathComponent(cleanJsPath)
+                let localJsDir = localJsPath.deletingLastPathComponent()
+                if !fileManager.fileExists(atPath: localJsDir.path) {
+                    try? fileManager.createDirectory(at: localJsDir, withIntermediateDirectories: true)
+                }
+                try? jsData.write(to: localJsPath)
+                savedFiles.insert(cleanJsPath)
+                
+                // JS-Inhalt nach versteckten Engine-Assets scannen
+                guard let jsString = String(data: jsData, encoding: .utf8) else { continue }
+                let jsMatches = extRegex.matches(in: jsString, range: NSRange(jsString.startIndex..., in: jsString))
+                for match in jsMatches {
+                    if let range = Range(match.range(at: 1), in: jsString) {
+                        let relUrl = String(jsString[range])
+                        if !relUrl.hasPrefix("http") { pathsToDownload.insert(relUrl) }
+                    }
+                }
+            }
+            
+            print("🔍 Deep-Crawler: \(pathsToDownload.count) Assets total nach JS-Scan.")
+            
+            // PHASE 3: Alle verbleibenden Assets herunterladen
+            let allPaths = Array(pathsToDownload).sorted()
+            let total = allPaths.count
+            for (index, relPath) in allPaths.enumerated() {
+                let cleanRelPath = relPath.components(separatedBy: "?").first ?? relPath
+                
+                // Bereits in Phase 2 gespeicherte JS-Dateien überspringen
+                if savedFiles.contains(cleanRelPath) { continue }
+                
                 self.downloadProgress = Double(index) / Double(total)
-                self.statusText = "Pre-Fetch \(index + 1)/\(total)..."
+                let fileName = URL(string: cleanRelPath)?.lastPathComponent ?? cleanRelPath
+                self.statusText = "Download \(index + 1)/\(total): \(fileName)"
                 
                 guard let assetUrl = URL(string: relPath, relativeTo: baseUrl) else { continue }
                 
-                let cleanRelPath = relPath.components(separatedBy: "?").first ?? relPath
                 let localAssetPath = gameFolder.appendingPathComponent(cleanRelPath)
                 let localAssetDir = localAssetPath.deletingLastPathComponent()
                 
@@ -185,9 +238,9 @@ class GameDownloader: ObservableObject {
                     try fileManager.createDirectory(at: localAssetDir, withIntermediateDirectories: true)
                 }
                 
-                // NEU: Die iPad-Tarnung für die Asset-Downloads!
+                // iPad-Tarnung für die Asset-Downloads
                 var assetReq = URLRequest(url: assetUrl)
-                assetReq.setValue("Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15", forHTTPHeaderField: "User-Agent")
+                assetReq.setValue(AppConstants.userAgent, forHTTPHeaderField: "User-Agent")
                 assetReq.setValue(iframeUrlString, forHTTPHeaderField: "Referer")
                 
                 if let (assetData, _) = try? await URLSession.shared.data(for: assetReq) {

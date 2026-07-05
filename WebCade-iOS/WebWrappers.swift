@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import Combine
 import WebKit
 
 // MARK: - WebKit Logik
@@ -65,9 +64,13 @@ struct GameWebView: UIViewRepresentable {
             if key.hasPrefix("webgame_") {
                 let originalKey = key.replacingOccurrences(of: "webgame_", with: "")
                 if let stringValue = value as? String {
-                    let escapedKey = originalKey.replacingOccurrences(of: "'", with: "\\'")
-                    let escapedValue = stringValue.replacingOccurrences(of: "'", with: "\\'")
-                    jsCode += "localStorage.setItem('\(escapedKey)', '\(escapedValue)');\n"
+                    // JSONSerialization erzeugt sicheres JSON-String-Literal (kein XSS via ')
+                    if let keyData   = try? JSONSerialization.data(withJSONObject: originalKey),
+                       let valData   = try? JSONSerialization.data(withJSONObject: stringValue),
+                       let keyJson   = String(data: keyData, encoding: .utf8),
+                       let valJson   = String(data: valData, encoding: .utf8) {
+                        jsCode += "localStorage.setItem(\(keyJson), \(valJson));\n"
+                    }
                 }
             }
         }
@@ -97,15 +100,15 @@ struct GameWebView: UIViewRepresentable {
         userContentController.add(context.coordinator, name: "savegameHandler")
         
         let scraperCode = """
-        var iframeFound = false;
-        setInterval(function() {
-            if (iframeFound) return;
-            var iframe = document.querySelector('iframe');
-            if (iframe && iframe.src) {
-                iframeFound = true;
-                window.webkit.messageHandlers.scraperHandler.postMessage(iframe.src);
-            }
-        }, 1000);
+        (function() {
+            const intervalId = setInterval(function() {
+                const iframe = document.querySelector('iframe');
+                if (iframe && iframe.src) {
+                    clearInterval(intervalId);
+                    window.webkit.messageHandlers.scraperHandler.postMessage(iframe.src);
+                }
+            }, 1000);
+        })();
         """
         let scraperScript = WKUserScript(source: scraperCode, injectionTime: .atDocumentEnd, forMainFrameOnly: false)
         userContentController.addUserScript(scraperScript)
@@ -152,7 +155,7 @@ struct GameWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: config)
         
         // Die Safari-Tarnkappe für unseren Game-Player!
-        webView.customUserAgent = "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        webView.customUserAgent = AppConstants.userAgent
         webView.navigationDelegate = context.coordinator
         
         webView.scrollView.isScrollEnabled = true

@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import Combine
 import WebKit
 
 // MARK: - UI Ansichten
@@ -104,8 +103,9 @@ struct GamePlayerView: View {
     
     @StateObject private var downloader = GameDownloader()
     @State private var discoveredIframeUrl: String? = nil
-    
-    // NEU: Update-Status Variablen
+    @State private var errorMessage: String? = nil
+
+    // Update-Status Variablen
     @State private var isCheckingForUpdates = false
     @State private var showGame = false
     
@@ -118,7 +118,7 @@ struct GamePlayerView: View {
         Group {
             if showGame {
                 // Das Spiel startet ganz normal vom lokalen Server
-                GameWebView(url: URL(string: "http://localhost:8080/index.html")!, discoveredIframeUrl: .constant(nil))
+                GameWebView(url: AppConstants.serverBaseURL.appendingPathComponent("index.html"), discoveredIframeUrl: .constant(nil))
                     .onAppear {
                         LocalServerManager.shared.startServer(for: currentLocalPath, iframeUrlString: game.iframeUrl)
                     }
@@ -149,6 +149,11 @@ struct GamePlayerView: View {
         }
         .ignoresSafeArea()
         .navigationBarBackButtonHidden(true)
+        .alert("Download fehlgeschlagen", isPresented: .constant(errorMessage != nil), actions: {
+            Button("OK") { errorMessage = nil }
+        }, message: {
+            Text(errorMessage ?? "")
+        })
         .overlay(alignment: .topTrailing) {
             HStack(spacing: 16) {
                 
@@ -202,26 +207,24 @@ struct GamePlayerView: View {
         }
     }
     
-    // NEU: Die UI-Funktion, die den Check aufruft und das UI steuert
     private func runUpdateCheckFlow() {
         isCheckingForUpdates = true
-        
+
         Task {
             let updateInfo = await downloader.checkForUpdate(for: game)
             isCheckingForUpdates = false
-            
-            // Wir speichern die neuen Version-Tags ab
+
             game.gameVersion = updateInfo.newVersion ?? game.gameVersion
             game.lastModifiedHeader = updateInfo.newHeader ?? game.lastModifiedHeader
-            
+
             if updateInfo.needsUpdate {
-                // Crawler überschreibt die alten lokalen Dateien mit den neuen
                 if let iframeUrl = game.iframeUrl {
-                    let _ = await downloader.downloadGameAssets(fromIframeUrl: iframeUrl, gameId: game.id)
+                    if await downloader.downloadGameAssets(fromIframeUrl: iframeUrl, gameId: game.id) == nil {
+                        errorMessage = "Das Spiel-Update konnte nicht heruntergeladen werden."
+                    }
                 }
             }
-            
-            // Update fertig (oder nicht nötig) -> Spiel starten!
+
             showGame = true
         }
     }
@@ -336,7 +339,7 @@ struct StoreWebView: UIViewRepresentable {
     
     func makeUIView(context: Context) -> WKWebView {
         let webView = WKWebView()
-        webView.customUserAgent = "Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        webView.customUserAgent = AppConstants.userAgent
         webView.navigationDelegate = context.coordinator
         return webView
     }

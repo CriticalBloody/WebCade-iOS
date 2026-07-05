@@ -1,9 +1,8 @@
 import Foundation
 import SwiftUI
-import Combine
 
 @main
-struct MyApp: App {
+struct WebCadeApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()

@@ -1,4 +1,5 @@
 # WebCade-iOS 🎮
+<img width="980" height="460" alt="webcade_ios_banner_1783293908837" src="https://github.com/user-attachments/assets/73f0137a-63c4-4234-ac7d-c696b7826fba" />
 
 Eine native iPadOS-Anwendung, die es ermöglicht, browserbasierte HTML5-Spiele (wie z.B. von itch.io) lokal herunterzuladen und komplett offline zu spielen. 
 

@@ -102,12 +102,18 @@ struct GameWebView: UIViewRepresentable {
         let scraperCode = """
         (function() {
             const intervalId = setInterval(function() {
-                const iframe = document.querySelector('iframe');
-                if (iframe && iframe.src) {
-                    clearInterval(intervalId);
-                    window.webkit.messageHandlers.scraperHandler.postMessage(iframe.src);
+                const iframes = document.querySelectorAll('iframe');
+                for (const iframe of iframes) {
+                    // Nur echte Spiel-Iframes akzeptieren (nicht Empfehlungsbanner!)
+                    if (iframe.src &&
+                        (iframe.src.includes('html-classic.itch.zone') ||
+                         iframe.src.includes('html.itch.zone'))) {
+                        clearInterval(intervalId);
+                        window.webkit.messageHandlers.scraperHandler.postMessage(iframe.src);
+                        break;
+                    }
                 }
-            }, 1000);
+            }, 500);
         })();
         """
         let scraperScript = WKUserScript(source: scraperCode, injectionTime: .atDocumentEnd, forMainFrameOnly: false)

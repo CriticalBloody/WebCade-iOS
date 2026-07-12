@@ -6,6 +6,7 @@ import WebKit
 
 struct GameWebView: UIViewRepresentable {
     let url: URL
+    let gameId: UUID?
     @Binding var discoveredIframeUrl: String?
     
     class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
@@ -16,14 +17,37 @@ struct GameWebView: UIViewRepresentable {
         }
         
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            // 1. Savegame Handler
+            // 1. Savegame Handler (Asynchrones Schreiben in Dateien)
             if message.name == "savegameHandler" {
                 if let body = message.body as? [String: Any],
                    let action = body["action"] as? String,
                    let key = body["key"] as? String,
-                   let value = body["value"] as? String {
+                   let value = body["value"] as? String,
+                   let gameId = self.parent.gameId {
                     if action == "setItem" {
-                        UserDefaults.standard.set(value, forKey: "webgame_\(key)")
+                        Task.detached(priority: .background) {
+                            let fileManager = FileManager.default
+                            if let docsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first {
+                                let savesDir = docsPath.appendingPathComponent(gameId.uuidString).appendingPathComponent("saves")
+                                if !fileManager.fileExists(atPath: savesDir.path) {
+                                    do {
+                                        try fileManager.createDirectory(at: savesDir, withIntermediateDirectories: true)
+                                    } catch {
+                                        AppLogger.error("Save-Verzeichnis konnte nicht erstellt werden", error: error)
+                                    }
+                                }
+                                
+                                // Clean key for safe filename
+                                let safeKey = key.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? key
+                                let fileUrl = savesDir.appendingPathComponent("\(safeKey).txt")
+                                do {
+                                    try value.write(to: fileUrl, atomically: true, encoding: .utf8)
+                                    AppLogger.debug("Savegame geschrieben: \(safeKey)")
+                                } catch {
+                                    AppLogger.error("Savegame konnte nicht geschrieben werden: \(safeKey)", error: error)
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -58,13 +82,19 @@ struct GameWebView: UIViewRepresentable {
     }
     
     func buildStorageInjectionCode() -> String {
-        let allDefaults = UserDefaults.standard.dictionaryRepresentation()
+        guard let gameId = gameId else { return "" }
+        let fileManager = FileManager.default
+        guard let docsPath = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else { return "" }
+        let savesDir = docsPath.appendingPathComponent(gameId.uuidString).appendingPathComponent("saves")
+        
         var jsCode = ""
-        for (key, value) in allDefaults {
-            if key.hasPrefix("webgame_") {
-                let originalKey = key.replacingOccurrences(of: "webgame_", with: "")
-                if let stringValue = value as? String {
-                    // JSONSerialization erzeugt sicheres JSON-String-Literal (kein XSS via ')
+        if let files = try? fileManager.contentsOfDirectory(atPath: savesDir.path) {
+            for file in files where file.hasSuffix(".txt") {
+                let safeKey = URL(fileURLWithPath: file).deletingPathExtension().lastPathComponent
+                let originalKey = safeKey.removingPercentEncoding ?? safeKey
+                let fileUrl = savesDir.appendingPathComponent(file)
+                
+                if let stringValue = try? String(contentsOf: fileUrl, encoding: .utf8) {
                     if let keyData   = try? JSONSerialization.data(withJSONObject: originalKey),
                        let valData   = try? JSONSerialization.data(withJSONObject: stringValue),
                        let keyJson   = String(data: keyData, encoding: .utf8),
@@ -88,11 +118,18 @@ struct GameWebView: UIViewRepresentable {
         
         let spyCode = """
         const originalSetItem = localStorage.setItem;
+        const pendingSaves = {};
         localStorage.setItem = function(key, value) {
             originalSetItem.apply(this, arguments);
-            window.webkit.messageHandlers.savegameHandler.postMessage({
-                action: 'setItem', key: key, value: value
-            });
+            if (!pendingSaves[key]) {
+                // 3000ms debounce prevents crashing from rapid skipping
+                pendingSaves[key] = setTimeout(function() {
+                    window.webkit.messageHandlers.savegameHandler.postMessage({
+                        action: 'setItem', key: key, value: localStorage.getItem(key)
+                    });
+                    delete pendingSaves[key];
+                }, 3000);
+            }
         };
         """
         let spyScript = WKUserScript(source: spyCode, injectionTime: .atDocumentStart, forMainFrameOnly: false)
@@ -177,5 +214,13 @@ struct GameWebView: UIViewRepresentable {
             let request = URLRequest(url: url)
             webView.load(request)
         }
+    }
+    
+    // MARK: - Memory Leak Fix
+    // WKUserContentController.add(_:name:) hält eine strong reference auf den Coordinator.
+    // Ohne Cleanup entsteht ein Retain-Cycle: WebView → Config → Controller → Coordinator → Parent
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.configuration.userContentController.removeAllScriptMessageHandlers()
+        webView.stopLoading()
     }
 }

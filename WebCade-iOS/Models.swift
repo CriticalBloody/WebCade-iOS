@@ -1,6 +1,5 @@
 import Foundation
 import SwiftUI
-import Combine
 
 // MARK: - GameColor Enum
 
@@ -38,12 +37,20 @@ struct WebGame: Identifiable, Codable {
     var coverColor: Color { colorCode.color }
 }
 
-class GameLibrary: ObservableObject {
-    @Published var games: [WebGame] = [] {
-        didSet { saveGames() }
+// MARK: - Bibliothek (@Observable, ersetzt ObservableObject)
+
+@Observable
+class GameLibrary {
+    var games: [WebGame] = [] {
+        didSet {
+            scheduleSave()
+        }
     }
+    private var saveTimer: Timer?
     
-    init() { loadGames() }
+    init() {
+        loadGames()
+    }
 
     // MARK: - Persistenz (JSON-Datei statt UserDefaults)
 
@@ -52,12 +59,20 @@ class GameLibrary: ObservableObject {
             .urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("library.json")
     }
+    
+    /// Debounced Save: Sammelt schnelle Änderungen und schreibt erst 0.5s nach der letzten Mutation
+    private func scheduleSave() {
+        saveTimer?.invalidate()
+        saveTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
+            self?.saveGames()
+        }
+    }
 
     // Nimmt Entwickler und Cover-URL direkt beim Scrapen entgegen
     func addGame(title: String, developer: String, coverImageUrl: String?, url: String) {
         let newGame = WebGame(
-            title: title.isEmpty ? "Neues Spiel" : title,
-            developer: developer.isEmpty ? "Unbekannt" : developer,
+            title: title.isEmpty ? String(localized: "Neues Spiel") : title,
+            developer: developer.isEmpty ? String(localized: "Unbekannt") : developer,
             colorCode: GameColor.allCases.randomElement() ?? .blue,
             sourceUrl: url,
             coverImageUrl: coverImageUrl
@@ -72,13 +87,19 @@ class GameLibrary: ObservableObject {
         if FileManager.default.fileExists(atPath: gameFolder.path) {
             do {
                 try FileManager.default.removeItem(at: gameFolder)
-                print("🗑️ Festplatte: Ordner erfolgreich gelöscht.")
+                AppLogger.info("Spielordner gelöscht: \(id.uuidString)")
             } catch {
-                print("❌ Fehler beim Löschen des Ordners: \(error)")
+                AppLogger.error("Spielordner konnte nicht gelöscht werden", error: error)
             }
         }
 
         games.removeAll { $0.id == id }
+    }
+    
+    /// Mutiert ein Spiel anhand seiner ID und speichert automatisch
+    func updateGame(withId id: UUID, _ mutation: (inout WebGame) -> Void) {
+        guard let index = games.firstIndex(where: { $0.id == id }) else { return }
+        mutation(&games[index])
     }
 
     private func saveGames() {
@@ -86,7 +107,7 @@ class GameLibrary: ObservableObject {
             let data = try JSONEncoder().encode(games)
             try data.write(to: libraryFileURL, options: .atomic)
         } catch {
-            print("❌ Bibliothek konnte nicht gespeichert werden: \(error)")
+            AppLogger.error("Bibliothek konnte nicht gespeichert werden", error: error)
         }
     }
 
@@ -99,7 +120,7 @@ class GameLibrary: ObservableObject {
             let data = try Data(contentsOf: libraryFileURL)
             self.games = try JSONDecoder().decode([WebGame].self, from: data)
         } catch {
-            print("⚠️ Bibliothek konnte nicht geladen werden (evtl. altes Format): \(error)")
+            AppLogger.warning("Bibliothek konnte nicht geladen werden (evtl. altes Format)", error: error)
             self.games = []
         }
     }

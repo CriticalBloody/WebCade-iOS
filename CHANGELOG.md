@@ -7,11 +7,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [0.3.0] – 2026-07-09
+
+### Added
+- **Fehler-UI**: Neues, ansprechendes Fehler-Banner im `GamePlayerView` statt störender System-Alerts.
+- **Lokalisierung**: Komplette App-UI ist nun für Xcode String-Catalogs vorbereitet (via `String(localized:)`).
+- **Haptic Feedback**: Tastbares Feedback bei wichtigen Aktionen (Download Start/Ende, Spiel löschen, Pull-to-Refresh).
+- **UX Verbesserungen**: Skeleton-Loading im Bibliotheks-Grid und Pull-to-Refresh hinzugefügt.
+- **Sicherheitsabfrage**: `.confirmationDialog` verhindert versehentliches Löschen von Spielen.
+- **Unit Tests**: `GameLibraryTests` und `CrawlerTests` hinzugefügt, um WebScraper-Regex und Persistenz abzusichern.
+
 ### Fixed
-- **Iframe-Scraper Bug**: Der Scraper lud statt des Spiels den itch.io-Empfehlungsbanner herunter,
-  da `document.querySelector('iframe')` den ersten (falschen) Iframe auf der Seite fand.
-  Fix: Filtert jetzt explizit nach `html-classic.itch.zone` / `html.itch.zone` URLs.
-- Interval-Polling von 1000ms auf 500ms reduziert für schnellere Spiel-Erkennung.
+- **WKWebView Memory Leak**: Retain-Cycle bei `WKUserContentController` durch Implementierung von `dismantleUIView` gestopft.
+- **OOM (Out Of Memory) Crashes**: `Data(contentsOf:)` durch effizientes `FileHandle`-Streaming (1MB Chunks) ersetzt. Große Assets (WASM/PCK) laden nun ohne RAM-Spikes.
+- **Force-Unwrap Crashes**: Ungültige URLs lassen die App nicht mehr abstürzen.
+- **Start-Timing-Bug**: Lokaler Proxy-Server startet nun garantiert synchron *bevor* die WebView gerendert wird. Verhindert Fehler beim ersten Laden eines Spiels.
+- **Update-Check-Loop**: Initialer Download speichert nun sofort die HTTP-Header. Verhindert doppelte Downloads direkt nach der Installation.
+- **Swift 6 Concurrency**: `AppLogger` auf `@Sendable` / `nonisolated` umgestellt, um strikte MainActor-Warnungen im Xcode 16 Compiler zu fixen.
+
+### Changed
+- **Architektur-Refactoring (God-Files)**: Die massiven Dateien `ContentView.swift` und `Services.swift` wurden komplett aufgelöst. Saubere Ordnerstruktur mit `Core/`, `Views/`, `Services/` und `Tests/` etabliert.
+- **Datenmodellierung**: Migration von `@StateObject`/`ObservableObject` auf Apples hochperformantes `@Observable` Makro (iOS 17+).
+- **Navigation**: `NavigationLink` lazy loading implementiert via `.navigationDestination`, um RAM zu sparen.
+- **Dateisystem**: Das gesamte Projekt nutzt nun Xcodes automatische `PBXFileSystemSynchronizedRootGroup`. Neue Dateien müssen nicht mehr manuell in die `pbxproj` registriert werden. Both Targets (Xcode und Playgrounds) sind synchron.
 
 ---
 
